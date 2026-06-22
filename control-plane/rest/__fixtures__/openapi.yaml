@@ -1,0 +1,57 @@
+# =============================================================================
+# CP-2 OpenAPI TEST FIXTURE — NOT THE SOURCE OF TRUTH.
+#
+# This is a deliberately minimal stand-in for the imported CP-2 `openapi.yaml`
+# published by `@alchemist/contracts`. It exists ONLY so `cdk synth` and the
+# tests can run in checkouts where the contracts package is not installed
+# (the package lives in a separate repo and is out of scope for this backend —
+# steering `tech-and-structure.md`: "Contracts are imported, not declared.").
+#
+# The REAL contract is loaded by shared/contracts#loadOpenApiSpec(); when it is
+# resolvable this fixture is never used. Do NOT treat this file as the contract,
+# and do NOT extend it to model real CP-2 commands — author those in the
+# contracts repo, not here.
+#
+# It declares just enough (one command path + one request model + a MOCK
+# integration) for the RestCommandApi construct to inject the CP-1 Cognito
+# authorizer and the request validator and synthesize a valid SpecRestApi.
+# =============================================================================
+openapi: 3.0.3
+info:
+  title: 1145 CP-2 Command API (TEST FIXTURE — stand-in, not authoritative)
+  version: 0.0.0-fixture
+paths:
+  /commands/bookings:
+    post:
+      operationId: createBookingCommand
+      summary: Fixture stand-in for a CP-2 booking command
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookingCommand'
+      responses:
+        '202':
+          description: Command accepted for fulfillment
+      x-amazon-apigateway-integration:
+        type: mock
+        requestTemplates:
+          application/json: '{"statusCode": 202}'
+        responses:
+          default:
+            statusCode: '202'
+components:
+  schemas:
+    BookingCommand:
+      type: object
+      additionalProperties: false
+      required:
+        - slot
+      properties:
+        slot:
+          type: string
+          description: Requested appointment slot (fixture field).
+        notes:
+          type: string
+          description: Optional free-text notes (fixture field).

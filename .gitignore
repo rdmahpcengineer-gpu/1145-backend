@@ -1,0 +1,20 @@
+# Node / CDK
+node_modules/
+cdk.out/
+*.js
+*.d.ts
+!jest.config.js
+# Hand-written plain-JS Lambda asset (not tsc output) — keep tracked.
+!control-plane/kms/onboarding/index.js
+*.tsbuildinfo
+
+# Python
+**/.venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.hypothesis/
+*.egg-info/
+
+# OS
+.DS_Store
