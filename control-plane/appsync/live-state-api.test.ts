@@ -57,10 +57,27 @@ describe('LiveStateApi — CP-3 AppSync', () => {
     });
   });
 
-  it('falls back to the local fixture stand-in when contracts are absent', () => {
+  it('resolves the imported @alchemist/contracts SDL by default', () => {
     const { api } = build();
-    expect(api.sdlSource).toBe(SdlSource.FIXTURE);
-    expect(api.sdlPath).toMatch(/__fixtures__[/\\]schema\.graphql$/);
+    expect(api.sdlSource).toBe(SdlSource.IMPORTED);
+    expect(api.sdlPath).toMatch(
+      /@alchemist[/\\]contracts[/\\]graphql[/\\]schema\.graphql$/,
+    );
+  });
+
+  it('falls back to the local fixture stand-in when contracts are absent', () => {
+    const ORIGINAL = process.env.ALCHEMIST_CONTRACTS_DIR;
+    // A real directory that lacks graphql/schema.graphql forces the loader to
+    // miss the artifact and drop to the local fixture stand-in.
+    process.env.ALCHEMIST_CONTRACTS_DIR = __dirname;
+    try {
+      const { api } = build();
+      expect(api.sdlSource).toBe(SdlSource.FIXTURE);
+      expect(api.sdlPath).toMatch(/__fixtures__[/\\]schema\.graphql$/);
+    } finally {
+      if (ORIGINAL === undefined) delete process.env.ALCHEMIST_CONTRACTS_DIR;
+      else process.env.ALCHEMIST_CONTRACTS_DIR = ORIGINAL;
+    }
   });
 
   it('loads an injected SDL path directly without contract resolution', () => {

@@ -9,6 +9,9 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
+    "check:contract": "node -e \"const fs=require('fs');const v=JSON.parse(fs.readFileSync('node_modules/@alchemist/contracts/package.json','utf8')).version;if(v!=='0.1.0'){console.error('contract version drift: expected 0.1.0, got '+v);process.exit(1)}console.log('@alchemist/contracts '+v+' OK')\"",
+    "check:fixtures": "node scripts/check-contract-fixtures.mjs",
+    "pretest": "npm run check:contract && npm run check:fixtures",
     "test": "jest",
     "cdk": "cdk",
     "synth": "cdk synth"
@@ -24,6 +27,7 @@
     "typescript": "~5.5.0"
   },
   "dependencies": {
+    "@alchemist/contracts": "0.1.0",
     "aws-cdk-lib": "2.155.0",
     "constructs": "^10.3.0",
     "js-yaml": "^3.14.1"

@@ -42,6 +42,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+# --------------------------------------------------------------------------- #
+# Generated boundary message types — imported, never authored.                #
+# --------------------------------------------------------------------------- #
+# The generated protobuf shapes (SE-1 wire, AC-2 tools, CP-2/CP-3 domain) are
+# re-exported here so the rest of AgentCore imports them from one place and uses
+# the SAME generated code the middleware sends over SE-1. These are distinct
+# from the artifact *loaders* below (which read the shipped openapi/graphql/proto
+# files); both surfaces are intentionally provided.
+from alchemist_contracts import ac2, domain, se1  # noqa: F401  re-export
+
+try:  # gRPC service stubs (grpcio is a transitive dep; guard just in case)
+    from alchemist_contracts import ac2_grpc, se1_grpc  # noqa: F401  re-export
+except ImportError:  # pragma: no cover - grpcio not installed
+    ac2_grpc = None
+    se1_grpc = None
+
 #: Distribution/package name of the imported boundary contracts.
 CONTRACTS_PACKAGE = "alchemist_contracts"
 
@@ -241,6 +257,12 @@ def load_se1_proto() -> LoadedSe1Proto:
 
 
 __all__ = [
+    # generated boundary message types (re-exported from alchemist_contracts)
+    "se1",
+    "ac2",
+    "domain",
+    "se1_grpc",
+    "ac2_grpc",
     "CONTRACTS_PACKAGE",
     "CONTRACTS_DIR_ENV",
     "ContractResolutionError",

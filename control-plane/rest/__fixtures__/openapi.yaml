@@ -1,57 +1,416 @@
-# =============================================================================
-# CP-2 OpenAPI TEST FIXTURE — NOT THE SOURCE OF TRUTH.
-#
-# This is a deliberately minimal stand-in for the imported CP-2 `openapi.yaml`
-# published by `@alchemist/contracts`. It exists ONLY so `cdk synth` and the
-# tests can run in checkouts where the contracts package is not installed
-# (the package lives in a separate repo and is out of scope for this backend —
-# steering `tech-and-structure.md`: "Contracts are imported, not declared.").
-#
-# The REAL contract is loaded by shared/contracts#loadOpenApiSpec(); when it is
-# resolvable this fixture is never used. Do NOT treat this file as the contract,
-# and do NOT extend it to model real CP-2 commands — author those in the
-# contracts repo, not here.
-#
-# It declares just enough (one command path + one request model + a MOCK
-# integration) for the RestCommandApi construct to inject the CP-1 Cognito
-# authorizer and the request validator and synthesize a valid SpecRestApi.
-# =============================================================================
-openapi: 3.0.3
+openapi: 3.1.0
 info:
-  title: 1145 CP-2 Command API (TEST FIXTURE — stand-in, not authoritative)
-  version: 0.0.0-fixture
+  title: Alchemist CP-2 — Dashboard Commands & Bulk Reads
+  version: 0.0.0
+  description: >
+    CP-2 is the REST command + bulk-read surface for the contact-center dashboard (plane B).
+
+    Everything that MUTATES state (book, mark-won, escalate, call-back) or returns LARGE LISTS goes
+    here. The live feed (per-call updates, transcript turns, lead pops) is CP-3 AppSync, NOT this API.
+    The middleware never calls this API.
+
+    Schemas mirror the proto domain source model (proto/alchemist/v0/domain.proto). Tenant is a
+    first-class field on every entity; the operative tenant is taken from the Cognito session and
+    MUST match any tenantId in the path/query (enforced server-side; PK = TENANT#<tenantId>).
+servers:
+  - url: https://api.alchemist.example/cp2/v1
+    description: CP-2 REST (API Gateway)
+
+security:
+  - cognito: []
+
+tags:
+  - name: commands
+    description: State-mutating operator/agent actions.
+  - name: reads
+    description: Bulk reads (snapshots / archives) too large for the live feed.
+  - name: realtime
+    description: LiveKit token issuance for joining a live call.
+
 paths:
-  /commands/bookings:
+  /appointments:
     post:
-      operationId: createBookingCommand
-      summary: Fixture stand-in for a CP-2 booking command
+      tags: [commands]
+      operationId: bookAppointment
+      summary: Book an appointment (command).
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/BookingCommand'
+            schema: { $ref: '#/components/schemas/BookAppointmentRequest' }
+      responses:
+        '201':
+          description: Booked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BookAppointmentResult' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /leads/{leadId}/mark-won:
+    post:
+      tags: [commands]
+      operationId: markWon
+      summary: Mark a lead/deal won with captured revenue.
+      parameters:
+        - $ref: '#/components/parameters/LeadId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MarkWonRequest' }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MarkWonResult' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /calls/{callId}/escalate:
+    post:
+      tags: [commands]
+      operationId: escalateCall
+      summary: Escalate a live call to a human (A2A handoff).
+      parameters:
+        - $ref: '#/components/parameters/CallId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EscalateRequest' }
       responses:
         '202':
-          description: Command accepted for fulfillment
-      x-amazon-apigateway-integration:
-        type: mock
-        requestTemplates:
-          application/json: '{"statusCode": 202}'
-        responses:
-          default:
-            statusCode: '202'
+          description: Escalation queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EscalateResult' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /callbacks:
+    post:
+      tags: [commands]
+      operationId: scheduleCallback
+      summary: Queue an outbound callback.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScheduleCallbackRequest' }
+      responses:
+        '202':
+          description: Callback scheduled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduleCallbackResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /livekit/token:
+    post:
+      tags: [realtime]
+      operationId: issueLiveKitToken
+      summary: Issue a scoped LiveKit access token to join a live call room.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LiveKitTokenRequest' }
+      responses:
+        '200':
+          description: Token issued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LiveKitTokenResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /leads:
+    get:
+      tags: [reads]
+      operationId: listLeads
+      summary: Bulk-read leads for a tenant.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Leads page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LeadPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /conversations:
+    get:
+      tags: [reads]
+      operationId: listConversations
+      summary: Bulk-read archived conversations for a tenant.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: range
+          in: query
+          required: true
+          schema: { $ref: '#/components/schemas/Range' }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Conversations page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /kpis:
+    get:
+      tags: [reads]
+      operationId: getKpis
+      summary: KPI rollup snapshot for a tenant + range.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: range
+          in: query
+          required: true
+          schema: { $ref: '#/components/schemas/Range' }
+      responses:
+        '200':
+          description: KPI rollup.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Kpi' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
 components:
+  securitySchemes:
+    cognito:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: CP-1 Cognito user-pool access token. tenantId is derived from the token claims.
+
+  parameters:
+    TenantId:
+      name: tenantId
+      in: query
+      required: true
+      description: Must match the tenant in the caller's session.
+      schema: { type: string }
+    LeadId:
+      name: leadId
+      in: path
+      required: true
+      schema: { type: string }
+    CallId:
+      name: callId
+      in: path
+      required: true
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema: { type: string }
+
+  responses:
+    BadRequest:
+      description: Invalid request.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing/invalid Cognito token.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Authenticated but not permitted for this tenant/resource.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Conflicts with current state (e.g. slot already taken).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
   schemas:
-    BookingCommand:
+    # ── enums (mirror proto domain) ──
+    Range:
+      type: string
+      enum: [TODAY, D7, D30]
+    CallResult:
+      type: string
+      enum: [AUTONOMOUS, ESCALATED, FALLBACK]
+
+    # ── domain entities (mirror proto/alchemist/v0/domain.proto) ──
+    CallBrief:
       type: object
-      additionalProperties: false
-      required:
-        - slot
       properties:
-        slot:
-          type: string
-          description: Requested appointment slot (fixture field).
-        notes:
-          type: string
-          description: Optional free-text notes (fixture field).
+        name: { type: string }
+        phone: { type: string, description: E.164 }
+        service: { type: string }
+        urgency: { type: string }
+        address: { type: string }
+        ask: { type: string }
+
+    Lead:
+      type: object
+      required: [id, tenantId, title, contact, score, hot, capturedAt]
+      properties:
+        id: { type: string }
+        tenantId: { type: string }
+        title: { type: string }
+        contact: { type: string }
+        score: { type: integer }
+        hot: { type: boolean }
+        intent: { type: string }
+        budget: { type: string }
+        urgency: { type: string }
+        contactAttempts: { type: integer }
+        recommendedAction: { type: string }
+        source: { type: string }
+        capturedAt: { type: string, format: date-time }
+
+    Conversation:
+      type: object
+      required: [id, tenantId, ts, caller, intent, result]
+      properties:
+        id: { type: string }
+        tenantId: { type: string }
+        ts: { type: string, format: date-time }
+        caller: { type: string }
+        intent: { type: string }
+        result: { $ref: '#/components/schemas/CallResult' }
+        revenue: { type: integer }
+
+    Kpi:
+      type: object
+      required: [tenantId, range, revenueRescued, appointments, zeroTouchRate, hotLeads, spark]
+      properties:
+        tenantId: { type: string }
+        range: { $ref: '#/components/schemas/Range' }
+        revenueRescued: { type: integer }
+        appointments: { type: integer }
+        zeroTouchRate: { type: integer }
+        hotLeads: { type: integer }
+        spark:
+          type: array
+          items: { type: integer }
+
+    # ── command requests/results ──
+    BookAppointmentRequest:
+      type: object
+      required: [tenantId, service, startTime, customerName]
+      properties:
+        tenantId: { type: string }
+        callId: { type: string, description: Set when booking on behalf of a live call. }
+        service: { type: string }
+        startTime: { type: string, format: date-time }
+        customerName: { type: string }
+        phone: { type: string, description: E.164 }
+        notes: { type: string }
+    BookAppointmentResult:
+      type: object
+      required: [appointmentId, confirmed, startTime]
+      properties:
+        appointmentId: { type: string }
+        confirmed: { type: boolean }
+        startTime: { type: string, format: date-time }
+
+    MarkWonRequest:
+      type: object
+      required: [tenantId, revenue]
+      properties:
+        tenantId: { type: string }
+        revenue: { type: integer }
+    MarkWonResult:
+      type: object
+      required: [updated, revenue]
+      properties:
+        updated: { type: boolean }
+        revenue: { type: integer }
+
+    EscalateRequest:
+      type: object
+      required: [tenantId, reason]
+      properties:
+        tenantId: { type: string }
+        reason: { type: string }
+        brief: { $ref: '#/components/schemas/CallBrief' }
+    EscalateResult:
+      type: object
+      required: [escalationId, queued]
+      properties:
+        escalationId: { type: string }
+        queued: { type: boolean }
+
+    ScheduleCallbackRequest:
+      type: object
+      required: [tenantId, phone, at]
+      properties:
+        tenantId: { type: string }
+        phone: { type: string, description: E.164 }
+        at: { type: string, format: date-time }
+        reason: { type: string }
+    ScheduleCallbackResult:
+      type: object
+      required: [callbackId, scheduledAt]
+      properties:
+        callbackId: { type: string }
+        scheduledAt: { type: string, format: date-time }
+
+    LiveKitTokenRequest:
+      type: object
+      required: [tenantId, callId]
+      properties:
+        tenantId: { type: string }
+        callId: { type: string }
+        identity: { type: string, description: Operator identity; defaults to the session subject. }
+    LiveKitTokenResult:
+      type: object
+      required: [token, room, url, expiresAt]
+      properties:
+        token: { type: string, description: Short-lived LiveKit JWT. }
+        room: { type: string }
+        url: { type: string, description: LiveKit server URL. }
+        expiresAt: { type: string, format: date-time }
+
+    # ── paged reads ──
+    LeadPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Lead' }
+        nextCursor: { type: string }
+    ConversationPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Conversation' }
+        nextCursor: { type: string }
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }

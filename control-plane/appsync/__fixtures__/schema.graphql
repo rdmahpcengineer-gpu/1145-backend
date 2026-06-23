@@ -1,109 +1,141 @@
-# =============================================================================
-# TEST FIXTURE — NOT THE SOURCE OF TRUTH.
+# Alchemist Business OS — CP-3 (AppSync) GraphQL contract
+# Lives in:   alchemist-contracts/graphql/schema.graphql   (1145-contract)
+# Built by:   1145-backend   — CDK provisions the AppSync API from THIS file.
+# Consumed by: 1145-frontend — graphql-codegen → 1145ai_web/src/dashboard/data/generated/
 #
-# This file is a *stand-in* for the imported CP-3 SDL that the real backend
-# loads from `@alchemist/contracts` `graphql/schema.graphql` (see design.md
-# "CP-3" and steering `tech-and-structure.md`: "the CP-3 AppSync schema is the
-# SDL from @alchemist/contracts — load it, don't rewrite it").
+# Scope: the LIVE read + subscribe surface for the contact-center dashboard (UI-3).
+#   • Dashboard READS via Cognito-auth Query.
+#   • Dashboard SUBSCRIBES via Cognito-auth Subscription.
+#   • BACKEND ONLY pushes via IAM-auth "publish*" mutations. AgentCore/workflows call these
+#     after consuming SE-1 utterances + events from middleware. Middleware never touches AppSync.
+#   • User COMMANDS (book slot, mark-won, escalate, call-back) are NOT here — they go through
+#     CP-2 REST (openapi.yaml in this same repo). AppSync = live data feed only.
 #
-# It exists ONLY so that `cdk synth` and the synth/snapshot tests can run when
-# the `@alchemist/contracts` package is not installed/linked in this checkout.
-# The `LiveStateApi` construct falls back to this fixture and emits a loud
-# warning whenever it is used. In every real deployment the loader resolves the
-# imported contract artifact instead (via node resolution or
-# `ALCHEMIST_CONTRACTS_DIR`), and this fixture is never read.
+# AppSync filter footgun: a subscription can only filter on arguments that appear as fields in
+# the bound mutation's RETURN payload. That is why Call carries tenantId and TranscriptTurn
+# carries callId — so onCallUpdated(tenantId) and onTranscriptAppended(callId) actually filter.
 #
-# It is intentionally a representative subset — enough to exercise the two CP-3
-# auth modes and the publish/subscribe fan-out shape — and must never be
-# treated as the authoritative contract. Do NOT extend this to "fill in" the
-# real schema; author the contract in `@alchemist/contracts`.
-#
-# Representative types: Call (with `sentiment` + `transcript`), Lead, the
-# `publish*` mutations (@aws_iam) and matching subscriptions/queries
-# (@aws_cognito_user_pools).
-# =============================================================================
+# Keep GraphQL field names aligned with the proto domain messages (SE-1) so there is one
+# conceptual model across the seam. The proto is the domain source; this mirrors it for CP-3.
 
-# A live call surfaced on the operator dashboard. Readable by operators
-# (Cognito) and writable only by the backend fan-out mutations (IAM), so the
-# type is reachable under both auth modes.
-type Call @aws_cognito_user_pools @aws_iam {
-  id: ID!
-  tenantId: ID!
-  status: String!
-  sentiment: Float
-  transcript: [TranscriptSegment!]
-  escalated: Boolean
-  startedAt: AWSDateTime
-}
+# ───────────────────────── Enums (mirror STATE{} / KPI range in the dashboard) ─────────────────────────
+enum CallState  { LISTEN THINK SPEAK HAND FALL }
+enum Speaker    { AI CALLER }
+enum Range      { TODAY D7 D30 }
+enum CallResult { AUTONOMOUS ESCALATED FALLBACK }
 
-type TranscriptSegment @aws_cognito_user_pools @aws_iam {
+# ───────────────────────── Core live types ─────────────────────────
+# dash-page-live.jsx
+type TranscriptTurn {
   callId: ID!
-  speaker: String!
+  speaker: Speaker!
   text: String!
-  at: AWSDateTime
+  ts: AWSDateTime!
 }
 
-type Lead @aws_cognito_user_pools @aws_iam {
+# the A2A one-way handoff brief (LiveRoom "Handoff brief")
+type CallBrief {
+  name: String
+  phone: AWSPhone
+  service: String
+  urgency: String
+  address: String
+  ask: String
+}
+
+# LIVE[] — one per active call
+type Call {
   id: ID!
   tenantId: ID!
-  name: String
-  phone: String
-  email: String
-  notes: String
+  callerName: String!
+  intent: String!
+  state: CallState!
+  timer: String
+  flow: [String!]!        # media+reasoning path, e.g. ["SIP","RTP","LiveKit","STT","AI"]
+  target: String          # outcome target, e.g. "Booking" / "Escalate → owner"
+  sentiment: Int          # live score 0-100  (ML + memory → CP-3 → UI-3)
+  brief: CallBrief
+  transcript: [TranscriptTurn!]!
+  updatedAt: AWSDateTime!
 }
 
-# Reads/subscriptions are authorized with Cognito user pools (CP-1).
-type Query {
-  getCall(id: ID!): Call @aws_cognito_user_pools
-  listCalls(tenant: ID): [Call!]! @aws_cognito_user_pools
+# LEADS[] — dash-page-leads.jsx (Lead Capture Index)
+type Lead {
+  id: ID!
+  tenantId: ID!
+  title: String!
+  contact: String!
+  score: Int!
+  hot: Boolean!
+  intent: String
+  budget: String
+  urgency: String
+  contactAttempts: Int
+  recommendedAction: String
+  source: String
+  capturedAt: AWSDateTime!
 }
 
-# `publish*` fan-out mutations are authorized with IAM only — invoked by the
-# backend with the tenant set from the validated SE-1 session.
-type Mutation {
-  publishCallUpdate(call: CallInput!): Call @aws_iam
-  appendTranscript(segment: TranscriptInput!): TranscriptSegment @aws_iam
-  publishLead(lead: LeadInput!): Lead @aws_iam
-  publishCallEscalated(call: CallInput!): Call @aws_iam
+# CONV[] — dash-page-conversations.jsx archive
+type Conversation {
+  id: ID!
+  tenantId: ID!
+  ts: AWSDateTime!
+  caller: String!
+  intent: String!
+  result: CallResult!
+  revenue: Int
 }
 
-# Subscriptions deliver the fan-out to authorized operators (Cognito). Any
-# `tenant` argument is a filter, never an authorization boundary.
-type Subscription {
-  onCallUpdate(tenant: ID): Call
-    @aws_subscribe(mutations: ["publishCallUpdate", "publishCallEscalated"])
-    @aws_cognito_user_pools
-  onTranscript(callId: ID!): TranscriptSegment
-    @aws_subscribe(mutations: ["appendTranscript"])
-    @aws_cognito_user_pools
-  onLead(tenant: ID): Lead
-    @aws_subscribe(mutations: ["publishLead"])
-    @aws_cognito_user_pools
+# KPI{} — overview / revenue rollups
+type Kpi {
+  tenantId: ID!
+  range: Range!
+  revenueRescued: Int!
+  appointments: Int!
+  zeroTouchRate: Int!
+  hotLeads: Int!
+  spark: [Int!]!
 }
 
+# ───────────────────────── Backend publish payloads (IAM only) ─────────────────────────
+input TranscriptInput { callId: ID! speaker: Speaker! text: String! ts: AWSDateTime! }
+input CallBriefInput  { name: String phone: AWSPhone service: String urgency: String address: String ask: String }
 input CallInput {
-  id: ID!
-  tenantId: ID
-  status: String
-  sentiment: Float
+  id: ID!  tenantId: ID!  callerName: String!  intent: String!  state: CallState!
+  timer: String  flow: [String!]!  target: String  sentiment: Int  brief: CallBriefInput
 }
-
-input TranscriptInput {
-  callId: ID!
-  speaker: String!
-  text: String!
-}
-
 input LeadInput {
-  tenantId: ID
-  name: String
-  phone: String
-  email: String
-  notes: String
+  id: ID!  tenantId: ID!  title: String!  contact: String!  score: Int!  hot: Boolean!
+  intent: String  budget: String  urgency: String  contactAttempts: Int  recommendedAction: String  source: String
 }
 
-schema {
-  query: Query
-  mutation: Mutation
-  subscription: Subscription
+# ───────────────────────── Dashboard reads (Cognito; tenant enforced in resolver: PK = TENANT#<tenantId>) ─────────────────────────
+type Query {
+  liveCalls(tenantId: ID!): [Call!]!                            @aws_cognito_user_pools
+  leads(tenantId: ID!): [Lead!]!                                @aws_cognito_user_pools
+  conversations(tenantId: ID!, range: Range!): [Conversation!]! @aws_cognito_user_pools
+  kpis(tenantId: ID!, range: Range!): Kpi                       @aws_cognito_user_pools
 }
+
+# ───────────────────────── Backend-only publishers (called by AgentCore/workflows, never the UI) ─────────────────────────
+type Mutation {
+  publishCallUpdate(input: CallInput!): Call               @aws_iam
+  appendTranscript(turn: TranscriptInput!): TranscriptTurn @aws_iam
+  publishLead(input: LeadInput!): Lead                     @aws_iam
+  publishCallEscalated(input: CallInput!): Call            @aws_iam
+}
+
+# ───────────────────────── Live push to UI-3 ─────────────────────────
+type Subscription {
+  onCallUpdated(tenantId: ID!): Call
+    @aws_subscribe(mutations: ["publishCallUpdate", "publishCallEscalated"]) @aws_cognito_user_pools
+  onTranscriptAppended(callId: ID!): TranscriptTurn
+    @aws_subscribe(mutations: ["appendTranscript"]) @aws_cognito_user_pools
+  onLeadCaptured(tenantId: ID!): Lead
+    @aws_subscribe(mutations: ["publishLead"]) @aws_cognito_user_pools
+  onCallEscalated(tenantId: ID!): Call
+    @aws_subscribe(mutations: ["publishCallEscalated"]) @aws_cognito_user_pools
+}
+
+schema { query: Query  mutation: Mutation  subscription: Subscription }

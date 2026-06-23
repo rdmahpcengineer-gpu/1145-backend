@@ -92,7 +92,8 @@ interface ArtifactSpec {
 const ARTIFACTS = {
   openapi: {
     name: 'CP-2 openapi.yaml',
-    defaultRelPath: 'openapi.yaml',
+    // The package ships the spec under openapi/ (see its `files` field); match that layout.
+    defaultRelPath: 'openapi/openapi.yaml',
     envOverride: 'ALCHEMIST_CONTRACTS_OPENAPI',
   },
   graphql: {
@@ -165,9 +166,19 @@ export function resolveContractsRoot(): string {
   }
 
   try {
-    // Resolve the package root via its package.json so we get a directory.
-    const pkgJson = require.resolve(`${CONTRACTS_PACKAGE}/package.json`);
-    return path.dirname(pkgJson);
+    // The package's "exports" map intentionally hides ./package.json, so we
+    // can't require.resolve it. Resolve the main entry (the "." export) instead
+    // and walk up to the directory that holds package.json — the package root.
+    const entry = require.resolve(CONTRACTS_PACKAGE);
+    let dir = path.dirname(entry);
+    while (!fs.existsSync(path.join(dir, 'package.json'))) {
+      const parent = path.dirname(dir);
+      if (parent === dir) {
+        throw new Error('walked past filesystem root without finding package.json');
+      }
+      dir = parent;
+    }
+    return dir;
   } catch {
     throw new ContractResolutionError(
       `Could not resolve the imported contracts. Either install/link ` +

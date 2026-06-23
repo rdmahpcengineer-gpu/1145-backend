@@ -7,7 +7,11 @@ name = "alchemist-agentcore"
 version = "0.1.0"
 description = "AgentCore (AC-1..4) for 1145 AI — forked from awslabs/amazon-bedrock-agentcore-samples"
 requires-python = ">=3.11"
-dependencies = []
+# Boundary shapes (SE-1 wire, AC-2 tools, domain) are imported from the published
+# contract, never authored here. Pinned to the versioned seam.
+dependencies = [
+    "alchemist-contracts==0.1.0",
+]
 
 [project.optional-dependencies]
 dev = [

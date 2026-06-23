@@ -113,8 +113,9 @@ describe('RestCommandApi — CP-2 SpecRestApi from imported openapi.yaml', () =>
     // / `addModel` calls (which would emit AWS::ApiGateway::Resource / ::Model).
     template.resourceCountIs('AWS::ApiGateway::Resource', 0);
     template.resourceCountIs('AWS::ApiGateway::Model', 0);
-    expect(Object.keys(doc.paths)).toContain('/commands/bookings');
-    expect(doc.components.schemas.BookingCommand).toBeDefined();
+    // Paths + schemas originate from the imported @alchemist/contracts spec.
+    expect(Object.keys(doc.paths)).toContain('/appointments');
+    expect(doc.components.schemas.BookAppointmentRequest).toBeDefined();
   });
 
   it('exports the REST API id and root resource id via shared wiring', () => {
@@ -127,9 +128,9 @@ describe('RestCommandApi — CP-2 SpecRestApi from imported openapi.yaml', () =>
     });
   });
 
-  it('reports the fixture origin when the contracts package is absent', () => {
+  it('reports the imported-contract origin when @alchemist/contracts is installed', () => {
     const { api } = build();
-    expect(api.specOrigin).toBe('test-fixture');
+    expect(api.specOrigin).toBe('imported-contract');
   });
 });
 
@@ -148,8 +149,20 @@ describe('resolveOpenApiSpec — synth-resilient contract resolution', () => {
     }
   });
 
-  it('falls back to the bundled fixture when the contract is unresolvable', () => {
+  it('resolves the imported @alchemist/contracts spec by default', () => {
     delete process.env.ALCHEMIST_CONTRACTS_DIR;
+    const resolved = resolveOpenApiSpec();
+    expect(resolved.origin).toBe('imported-contract');
+    expect(resolved.path).toMatch(
+      /@alchemist[/\\]contracts[/\\]openapi[/\\]openapi\.yaml$/,
+    );
+    expect(resolved.raw).toContain('openapi:');
+  });
+
+  it('falls back to the bundled fixture when the contract is unresolvable', () => {
+    // Point resolution at a real directory that does NOT contain the artifact,
+    // forcing a MissingContractArtifactError -> the local fixture stand-in.
+    process.env.ALCHEMIST_CONTRACTS_DIR = __dirname;
     const resolved = resolveOpenApiSpec();
     expect(resolved.origin).toBe('test-fixture');
     expect(resolved.path).toBe(FIXTURE_OPENAPI_PATH);
@@ -163,7 +176,7 @@ describe('resolveOpenApiSpec — synth-resilient contract resolution', () => {
   });
 
   it('fails loudly when the contract is unresolvable and fallback is disabled', () => {
-    delete process.env.ALCHEMIST_CONTRACTS_DIR;
+    process.env.ALCHEMIST_CONTRACTS_DIR = __dirname;
     expect(() =>
       resolveOpenApiSpec({ allowFixtureFallback: false }),
     ).toThrow();
